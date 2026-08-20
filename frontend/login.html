@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Log in — TicketBox</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav id="nav"></nav>
+  <div class="wrap">
+    <div class="panel auth-box">
+      <h3 class="page-title" style="margin-top:0">Log in</h3>
+      <form class="form" id="loginForm">
+        <label class="field">Email <input name="email" type="email" required></label>
+        <label class="field">Password <input name="password" type="password" required></label>
+        <button class="btn gold" type="submit">Log in</button>
+        <div class="small dim">New here? <a href="register.html">Create an account</a></div>
+      </form>
+    </div>
+  </div>
+<script src="js/app.js"></script>
+<script>
+  const { api, errMsg, setSession, renderNav, toast } = TBS;
+  renderNav("");
+  document.getElementById("loginForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const f = new FormData(ev.target);
+    try {
+      const res = await api("/api/auth/login", { method: "POST",
+        body: { email: f.get("email"), password: f.get("password") } });
+      setSession(res.token, res.user);
+      const next = new URLSearchParams(location.search).get("next");
+      location.href = next || "index.html";
+    } catch (e) { toast(errMsg(e), "error"); }
+  });
+</script>
+</body>
+</html>

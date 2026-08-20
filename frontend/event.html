@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Event — TicketBox</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav id="nav"></nav>
+  <div class="wrap">
+    <div id="header"></div>
+
+    <div class="two-col" style="margin-top:18px">
+      <!-- ------------------------------ hall ---------------------------- -->
+      <div class="hall">
+        <div class="screen-arc"></div>
+        <div class="screen-label" id="stageLabel">SCREEN</div>
+        <div class="seat-rows" id="seatRows"></div>
+        <div class="legend">
+          <span class="chip"><span class="sw"></span> Standard</span>
+          <span class="chip"><span class="sw premium"></span> Premium</span>
+          <span class="chip"><span class="sw sel"></span> Your selection</span>
+          <span class="chip"><span class="sw held"></span> Held by others</span>
+          <span class="chip"><span class="sw booked"></span> Booked</span>
+        </div>
+      </div>
+
+      <!-- --------------------------- side panel -------------------------- -->
+      <div>
+        <div class="panel" id="sidePanel"></div>
+        <div id="waitlistPanel" style="margin-top:16px"></div>
+      </div>
+    </div>
+  </div>
+
+<script src="js/app.js"></script>
+<script>
+const { api, errMsg, getUser, renderNav, toast, fmtDate, fmtMoney,
+        countdown, requireLogin } = TBS;
+renderNav("events");
+
+const eventId = new URLSearchParams(location.search).get("id");
+const user = getUser();
+
+/* Page state machine: select -> checkout -> done */
+let mode = "select";
+let selected = new Set();        // event_seat ids picked (before hold)
+let heldIds = [];                // event_seat ids currently held by me
+let holdExpiresAt = null;
+let stopTimer = null;
+let map = null;                  // latest seatmap payload
+let lastBooking = null;
+
+const priceOf = (cat) =>
+  (map.event.categories.find(c => c.category === cat) || {}).price || 0;
+
+/* ------------------------------ rendering -------------------------------- */
+function renderHeader() {
+  const e = map.event;
+  document.getElementById("stageLabel").textContent =
+    e.event_type === "movie" ? "SCREEN" : "STAGE";
+  document.getElementById("header").innerHTML = `
+    <h2 class="page-title">${e.title}
+      <span class="badge ${e.event_type}">${e.event_type}</span></h2>
+    <div class="dim">${fmtDate(e.starts_at)} · ${e.venue.name}, ${e.venue.city}</div>
+    <p class="dim small" style="max-width:640px">${e.description || ""}</p>`;
+}
+
+function renderSeats() {
+  const rowsEl = document.getElementById("seatRows");
+  rowsEl.innerHTML = "";
+  for (const row of map.rows) {
+    const div = document.createElement("div");
+    div.className = "seat-row";
+    div.innerHTML = `<span class="row-label">${row.row}</span>`;
+    for (const s of row.seats) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.title = `${s.label} · ${s.category} · ${fmtMoney(priceOf(s.category))}`;
+      b.textContent = s.number;
+      const cls = ["seat"];
+      if (s.category.toLowerCase() === "premium") cls.push("premium");
+      if (s.mine || heldIds.includes(s.id)) cls.push("mine");
+      else if (selected.has(s.id)) cls.push("selected");
+      else cls.push(s.status);                    // available | held | booked
+      b.className = cls.join(" ");
+      if (s.status === "available" && mode === "select") {
+        b.onclick = () => {
+          selected.has(s.id) ? selected.delete(s.id) : selected.add(s.id);
+          renderSeats(); renderSide();
+        };
+      } else if (!s.mine) {
+        b.disabled = true;
+      }
+      div.appendChild(b);
+    }
+    rowsEl.appendChild(div);
+  }
+}
+
+function selectedSeats() {
+  const ids = mode === "select" ? [...selected] : heldIds;
+  const out = [];
+  for (const row of map.rows)
+    for (const s of row.seats)
+      if (ids.includes(s.id)) out.push(s);
+  return out;
+}
+
+function renderSide() {
+  const panel = document.getElementById("sidePanel");
+  const seats = selectedSeats();
+  const total = seats.reduce((sum, s) => sum + priceOf(s.category), 0);
+  const lines = seats.map(s =>
+    `<div class="kv"><span class="mono">${s.label} · ${s.category}</span>
+     <span>${fmtMoney(priceOf(s.category))}</span></div>`).join("");
+
+  if (mode === "select") {
+    panel.innerHTML = `
+      <h3>Your selection</h3>
+      ${seats.length ? lines : '<div class="dim small">Tap seats on the map to pick them.</div>'}
+      <hr class="hr">
+      <div class="kv total"><b>Total</b><b>${fmtMoney(total)}</b></div>
+      <button class="btn gold" id="holdBtn" style="width:100%;margin-top:12px"
+        ${seats.length ? "" : "disabled"}>Hold seats (${Math.round(map.hold_ttl_seconds/60)} min)</button>
+      <div class="small dim" style="margin-top:8px">Holding reserves the seats
+        while you check out. Unpaid holds release automatically.</div>`;
+    const btn = document.getElementById("holdBtn");
+    if (btn) btn.onclick = placeHold;
+
+  } else if (mode === "checkout") {
+    panel.innerHTML = `
+      <h3>Checkout</h3>
+      <div class="dim small">Seats held for you — complete payment before the timer runs out.</div>
+      <div class="countdown" id="cd" style="margin:10px 0">--:--</div>
+      ${lines}
+      <hr class="hr">
+      <div class="kv"><span>Name</span><span>${user.name}</span></div>
+      <div class="kv"><span>Ticket to</span><span>${user.email}</span></div>
+      <hr class="hr">
+      <div class="kv total"><b>Total</b><b>${fmtMoney(total)}</b></div>
+      <button class="btn gold" id="payBtn" style="width:100%;margin-top:12px">
+        Pay ${fmtMoney(total)} (simulated)</button>
+      <button class="btn ghost" id="releaseBtn" style="width:100%;margin-top:8px">
+        Release seats</button>`;
+    document.getElementById("payBtn").onclick = confirmBooking;
+    document.getElementById("releaseBtn").onclick = releaseHold;
+    if (stopTimer) stopTimer();
+    stopTimer = countdown(holdExpiresAt, map.server_time, (txt, left) => {
+      const cd = document.getElementById("cd");
+      if (cd) { cd.textContent = txt; cd.classList.toggle("low", left < 60); }
+    }, () => {
+      toast("Your hold expired — the seats were released.", "error");
+      resetToSelect();
+    });
+
+  } else if (mode === "done") {
+    panel.innerHTML = `
+      <div class="stub">
+        <h3 style="margin-top:0">Booking confirmed 🎉</h3>
+        <div class="ref">${lastBooking.booking_ref}</div>
+        <div class="small dim" style="margin:6px 0 10px">
+          Seats ${lastBooking.seats.map(s => s.label).join(", ")} ·
+          ${fmtMoney(lastBooking.total_amount)}<br>
+          QR ticket emailed to ${user.email}.</div>
+        <a class="btn gold small" href="bookings.html">My bookings & QR</a>
+      </div>`;
+  }
+}
+
+function renderWaitlist() {
+  const holder = document.getElementById("waitlistPanel");
+  const soldOut = map.event.categories.filter(c => c.sold_out);
+  if (!soldOut.length) { holder.innerHTML = ""; return; }
+  holder.innerHTML = `
+    <div class="panel">
+      <h3>Waitlist</h3>
+      <div class="small dim" style="margin-bottom:10px">These categories are
+        sold out. Join the queue — if a booking is cancelled, the seat is
+        offered to the next person by email with a time-limited link.</div>
+      ${soldOut.map(c => `
+        <div class="kv"><span>${c.category} · ${fmtMoney(c.price)}</span>
+          <button class="btn ghost small wl-join" data-cat="${c.category}">
+            Join waitlist</button></div>`).join("")}
+    </div>`;
+  holder.querySelectorAll(".wl-join").forEach(btn => {
+    btn.onclick = async () => {
+      if (!requireLogin()) return;
+      try {
+        const res = await api(`/api/events/${eventId}/waitlist`,
+          { method: "POST", body: { category: btn.dataset.cat } });
+        toast(`Joined! You are #${res.position} in line — watch your email.`, "success");
+      } catch (e) { toast(errMsg(e), "error"); }
+    };
+  });
+}
+
+/* -------------------------------- actions -------------------------------- */
+async function placeHold() {
+  if (!requireLogin()) return;
+  if (getUser().role !== "customer")
+    return toast("Log in with a customer account to book seats.", "error");
+  try {
+    const res = await api(`/api/events/${eventId}/holds`,
+      { method: "POST", body: { seat_ids: [...selected] } });
+    heldIds = res.held_seat_ids;
+    holdExpiresAt = res.hold_expires_at;
+    selected.clear();
+    mode = "checkout";
+    await refresh();
+    toast("Seats held — complete checkout before the timer ends.", "success");
+  } catch (e) {
+    toast(errMsg(e), "error");
+    await refresh();   // show who beat us to the seat
+  }
+}
+
+async function confirmBooking() {
+  try {
+    lastBooking = await api("/api/bookings",
+      { method: "POST", body: { event_id: Number(eventId), seat_ids: heldIds } });
+    mode = "done";
+    if (stopTimer) stopTimer();
+    heldIds = [];
+    await refresh();
+    toast("Payment successful — ticket emailed!", "success");
+  } catch (e) {
+    toast(errMsg(e), "error");
+    resetToSelect();
+  }
+}
+
+async function releaseHold() {
+  try { await api(`/api/events/${eventId}/holds`, { method: "DELETE" }); }
+  catch (e) { /* hold may already be gone */ }
+  toast("Seats released.");
+  resetToSelect();
+}
+
+async function resetToSelect() {
+  mode = "select"; heldIds = []; holdExpiresAt = null;
+  if (stopTimer) { stopTimer(); stopTimer = null; }
+  await refresh();
+}
+
+/* --------------------------- live map polling ---------------------------- */
+async function refresh() {
+  try {
+    map = await api(`/api/events/${eventId}/seatmap`);
+    renderHeader(); renderSeats(); renderSide(); renderWaitlist();
+  } catch (e) { toast(errMsg(e), "error"); }
+}
+
+refresh();
+setInterval(() => { if (mode !== "done") refresh(); }, 5000);  // near real-time
+</script>
+</body>
+</html>

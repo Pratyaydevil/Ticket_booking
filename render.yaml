@@ -1,0 +1,15 @@
+# One-click-ish deploy config for Render (free tier works).
+services:
+  - type: web
+    name: ticket-booking-system
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python seed.py && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: EMAIL_MODE
+        value: console
+      - key: BASE_URL
+        sync: false   # set to your onrender.com URL after first deploy

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Organiser — TicketBox</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav id="nav"></nav>
+  <div class="wrap">
+    <h2 class="page-title">Create an event</h2>
+    <div class="panel">
+      <form class="form wide" id="eventForm">
+        <label class="field">Venue <select name="venue_id" id="venueSel" required></select></label>
+        <label class="field">Title <input name="title" required minlength="2"></label>
+        <label class="field">Type
+          <select name="event_type"><option value="movie">Movie</option>
+            <option value="concert">Concert</option></select></label>
+        <label class="field">Date & time <input name="starts_at" type="datetime-local" required></label>
+        <label class="field">Description <textarea name="description" rows="2"></textarea></label>
+        <div id="priceInputs" class="form" style="gap:8px"></div>
+        <button class="btn gold" type="submit">Create event</button>
+      </form>
+    </div>
+
+    <h2 class="page-title">My events</h2>
+    <div id="myEvents" style="display:flex;flex-direction:column;gap:12px"></div>
+    <div class="empty" id="noEvents" hidden>No events yet — create one above.</div>
+    <div id="summaryBox" style="margin-top:16px"></div>
+  </div>
+
+<script src="js/app.js"></script>
+<script>
+const { api, errMsg, getUser, renderNav, toast, fmtDate, fmtMoney, requireLogin } = TBS;
+renderNav("organiser");
+const user = getUser();
+if (requireLogin("organiser.html")) {
+  if (!user || (user.role !== "organiser" && user.role !== "admin")) {
+    document.querySelector(".wrap").innerHTML =
+      '<div class="notice red" style="margin-top:40px">This page needs an organiser account.</div>';
+  } else { init(); }
+}
+
+async function init() { await Promise.all([loadVenues(), loadEvents()]); }
+
+async function loadVenues() {
+  try {
+    const venues = await api("/api/venues");
+    const sel = document.getElementById("venueSel");
+    sel.innerHTML = venues.map(v =>
+      `<option value="${v.id}" data-cats='${JSON.stringify(v.categories)}'>
+         ${v.name}, ${v.city} (${v.total_seats} seats)</option>`).join("");
+    sel.onchange = renderPriceInputs;
+    renderPriceInputs();
+  } catch (e) { toast(errMsg(e), "error"); }
+}
+
+function renderPriceInputs() {
+  const sel = document.getElementById("venueSel");
+  const opt = sel.selectedOptions[0];
+  const cats = opt ? JSON.parse(opt.dataset.cats) : [];
+  document.getElementById("priceInputs").innerHTML = cats.map(c => `
+    <label class="field">Price — ${c} (₹)
+      <input type="number" min="1" required data-price="${c}" placeholder="e.g. 250"></label>`).join("");
+}
+
+document.getElementById("eventForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = new FormData(ev.target);
+  const prices = {};
+  document.querySelectorAll("[data-price]").forEach(i =>
+    prices[i.dataset.price] = Number(i.value));
+  try {
+    const res = await api("/api/events", { method: "POST", body: {
+      venue_id: Number(f.get("venue_id")), title: f.get("title"),
+      event_type: f.get("event_type"), starts_at: f.get("starts_at"),
+      description: f.get("description"), prices } });
+    toast(`Event created with ${res.seats_created} seats on sale.`, "success");
+    ev.target.reset(); renderPriceInputs(); loadEvents();
+  } catch (e) { toast(errMsg(e), "error"); }
+});
+
+async function loadEvents() {
+  try {
+    const events = await api("/api/organiser/events");
+    document.getElementById("noEvents").hidden = events.length > 0;
+    const holder = document.getElementById("myEvents");
+    holder.innerHTML = events.map(e => `
+      <div class="panel"><div class="kv">
+        <div><b>${e.title}</b> <span class="badge ${e.event_type}">${e.event_type}</span>
+          <div class="dim small">${fmtDate(e.starts_at)} · ${e.venue.name}</div></div>
+        <button class="btn ghost small" data-sum="${e.id}">Summary & revenue</button>
+      </div></div>`).join("");
+    holder.querySelectorAll("[data-sum]").forEach(b => b.onclick = () => summary(b.dataset.sum));
+  } catch (e) { toast(errMsg(e), "error"); }
+}
+
+async function summary(id) {
+  try {
+    const s = await api(`/api/organiser/events/${id}/summary`);
+    document.getElementById("summaryBox").innerHTML = `
+      <div class="panel">
+        <h3>${s.event.title} — summary</h3>
+        <div class="kv"><span>Confirmed bookings</span><b>${s.confirmed_bookings}</b></div>
+        <div class="kv"><span>Tickets sold</span><b>${s.tickets_sold}</b></div>
+        <div class="kv"><span>Cancellations</span><b>${s.cancelled_bookings}</b></div>
+        <div class="kv total"><span>Revenue</span><b>${fmtMoney(s.revenue)}</b></div>
+        <hr class="hr">
+        <table><thead><tr><th>Category</th><th>Price</th><th>Total</th>
+          <th>Booked</th><th>Available</th></tr></thead><tbody>
+          ${s.by_category.map(c => `<tr><td>${c.category}</td>
+            <td>${fmtMoney(c.price)}</td><td>${c.total}</td>
+            <td>${c.booked}</td><td>${c.available}</td></tr>`).join("")}
+        </tbody></table>
+      </div>`;
+    document.getElementById("summaryBox").scrollIntoView({ behavior: "smooth" });
+  } catch (e) { toast(errMsg(e), "error"); }
+}
+</script>
+</body>
+</html>

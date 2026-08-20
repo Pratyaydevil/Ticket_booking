@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claim your seat — TicketBox</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav id="nav"></nav>
+  <div class="wrap">
+    <div class="auth-box" id="box"></div>
+  </div>
+<script src="js/app.js"></script>
+<script>
+const { api, errMsg, renderNav, toast, fmtDate, fmtMoney, countdown, requireLogin } = TBS;
+renderNav("");
+const token = new URLSearchParams(location.search).get("token");
+const box = document.getElementById("box");
+
+async function load() {
+  if (!requireLogin()) return;
+  try {
+    const offer = await api("/api/waitlist/offer/" + token);
+    box.innerHTML = `
+      <div class="stub">
+        <h3 style="margin-top:0">A seat opened up for you</h3>
+        <div><b>${offer.event.title}</b></div>
+        <div class="dim small">${fmtDate(offer.event.starts_at)} · ${offer.event.venue}</div>
+        <hr class="hr">
+        <div class="kv"><span class="mono">Seat ${offer.seat.label} · ${offer.seat.category}</span>
+          <b>${fmtMoney(offer.price)}</b></div>
+        <div class="small dim" style="margin:8px 0 4px">Reserved for you for:</div>
+        <div class="countdown" id="cd">--:--</div>
+        <button class="btn gold" id="claimBtn" style="width:100%;margin-top:12px">
+          Pay ${fmtMoney(offer.price)} & book (simulated)</button>
+        <div class="small dim" style="margin-top:8px">If the timer runs out, the
+          seat is offered to the next person in line.</div>
+      </div>`;
+    countdown(offer.offer_expires_at, offer.server_time, (txt, left) => {
+      const cd = document.getElementById("cd");
+      if (cd) { cd.textContent = txt; cd.classList.toggle("low", left < 60); }
+    }, () => fail("This offer has expired — the seat moved to the next person in line."));
+    document.getElementById("claimBtn").onclick = claim;
+  } catch (e) {
+    fail(e.status === 410
+      ? "This offer has expired — the seat was offered to the next person in line."
+      : errMsg(e));
+  }
+}
+
+async function claim() {
+  try {
+    const res = await api(`/api/waitlist/offer/${token}/confirm`, { method: "POST" });
+    box.innerHTML = `
+      <div class="stub">
+        <h3 style="margin-top:0">Booking confirmed 🎉</h3>
+        <div class="ref">${res.booking_ref}</div>
+        <div class="small dim" style="margin:6px 0 12px">
+          ${fmtMoney(res.total_amount)} paid · QR ticket sent to your email.</div>
+        <a class="btn gold small" href="bookings.html">My bookings & QR</a>
+      </div>`;
+    toast("Seat is yours — congrats!", "success");
+  } catch (e) { fail(errMsg(e)); }
+}
+
+function fail(message) {
+  box.innerHTML = `
+    <div class="notice red">${message}</div>
+    <a class="btn ghost" style="margin-top:14px" href="index.html">Browse events</a>`;
+}
+
+load();
+</script>
+</body>
+</html>

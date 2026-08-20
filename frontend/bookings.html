@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My bookings — TicketBox</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav id="nav"></nav>
+  <div class="wrap">
+    <h2 class="page-title">My bookings</h2>
+    <div id="bookings" style="display:flex;flex-direction:column;gap:14px"></div>
+    <div class="empty" id="noBookings" hidden>No bookings yet —
+      <a href="index.html">find something to watch</a>.</div>
+
+    <h2 class="page-title">My waitlist</h2>
+    <div id="waitlist" style="display:flex;flex-direction:column;gap:12px"></div>
+    <div class="empty" id="noWaitlist" hidden>You're not on any waitlists.</div>
+  </div>
+
+<script src="js/app.js"></script>
+<script>
+const { api, errMsg, getToken, renderNav, toast, fmtDate, fmtMoney, requireLogin } = TBS;
+renderNav("bookings");
+if (requireLogin("bookings.html")) init();
+
+async function init() { await Promise.all([loadBookings(), loadWaitlist()]); }
+
+async function loadBookings() {
+  try {
+    const bookings = await api("/api/me/bookings");
+    document.getElementById("noBookings").hidden = bookings.length > 0;
+    const holder = document.getElementById("bookings");
+    holder.innerHTML = bookings.map(b => `
+      <div class="stub">
+        <div class="kv">
+          <div>
+            <span class="ref">${b.booking_ref}</span>
+            <span class="badge ${b.status === "confirmed" ? b.event.event_type : "soldout"}"
+              style="margin-left:8px">${b.status}</span>
+            <div style="margin-top:6px"><b>${b.event.title}</b></div>
+            <div class="dim small">${fmtDate(b.event.starts_at)} · ${b.event.venue}</div>
+            <div class="small mono" style="margin-top:4px">
+              ${b.seats.map(s => s.label).join(", ")} · ${fmtMoney(b.total_amount)}</div>
+          </div>
+          <div style="text-align:right;display:flex;flex-direction:column;gap:8px">
+            ${b.status === "confirmed" ? `
+              <button class="btn ghost small" data-qr="${b.id}">View QR ticket</button>
+              <button class="btn danger small" data-cancel="${b.id}">Cancel booking</button>` : ""}
+          </div>
+        </div>
+        <img class="qr-img" id="qr-${b.id}" hidden alt="QR ticket ${b.booking_ref}">
+      </div>`).join("");
+
+    holder.querySelectorAll("[data-qr]").forEach(btn => btn.onclick = () => showQr(btn.dataset.qr));
+    holder.querySelectorAll("[data-cancel]").forEach(btn => btn.onclick = () => cancel(btn.dataset.cancel));
+  } catch (e) { toast(errMsg(e), "error"); }
+}
+
+/* <img> can't send an Authorization header, so fetch the PNG as a blob. */
+async function showQr(id) {
+  const img = document.getElementById("qr-" + id);
+  if (!img.hidden) { img.hidden = true; return; }
+  try {
+    const res = await fetch(`/api/bookings/${id}/qr`,
+      { headers: { Authorization: "Bearer " + getToken() } });
+    if (!res.ok) throw { status: res.status };
+    img.src = URL.createObjectURL(await res.blob());
+    img.hidden = false;
+  } catch (e) { toast(errMsg(e), "error"); }
+}
+
+async function cancel(id) {
+  if (!confirm("Cancel this booking? The seats will be released to the waitlist.")) return;
+  try {
+    const res = await api(`/api/bookings/${id}/cancel`, { method: "POST" });
+    toast(res.waitlist_offers_sent
+      ? `Cancelled — ${res.waitlist_offers_sent} waitlisted customer(s) just got an offer.`
+      : "Booking cancelled.", "success");
+    init();
+  } catch (e) { toast(errMsg(e), "error"); }
+}
+
+async function loadWaitlist() {
+  try {
+    const entries = await api("/api/me/waitlist");
+    document.getElementById("noWaitlist").hidden = entries.length > 0;
+    const holder = document.getElementById("waitlist");
+    holder.innerHTML = entries.map(e => `
+      <div class="panel">
+        <div class="kv">
+          <div>
+            <b>${e.event.title}</b> · ${e.category}
+            <div class="dim small">${fmtDate(e.event.starts_at)} ·
+              status: <span class="mono">${e.status}</span>
+              ${e.position ? " · position #" + e.position : ""}</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            ${e.status === "offered"
+              ? `<a class="btn gold small" href="claim.html?token=${e.offer_token}">
+                   Complete booking</a>`
+              : ""}
+            ${e.status === "waiting" || e.status === "offered"
+              ? `<button class="btn ghost small" data-leave="${e.entry_id}">Leave</button>`
+              : ""}
+          </div>
+        </div>
+      </div>`).join("");
+    holder.querySelectorAll("[data-leave]").forEach(btn => btn.onclick = async () => {
+      try { await api("/api/waitlist/" + btn.dataset.leave, { method: "DELETE" });
+            toast("Left the waitlist."); loadWaitlist(); }
+      catch (e) { toast(errMsg(e), "error"); }
+    });
+  } catch (e) { toast(errMsg(e), "error"); }
+}
+</script>
+</body>
+</html>

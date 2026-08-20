@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign up — TicketBox</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav id="nav"></nav>
+  <div class="wrap">
+    <div class="panel auth-box">
+      <h3 class="page-title" style="margin-top:0">Create account</h3>
+      <form class="form" id="regForm">
+        <label class="field">Full name <input name="name" required minlength="2"></label>
+        <label class="field">Email <input name="email" type="email" required></label>
+        <label class="field">Password (8+ characters)
+          <input name="password" type="password" required minlength="8"></label>
+        <label class="field">I want to
+          <select name="role">
+            <option value="customer">Book tickets (customer)</option>
+            <option value="organiser">Host events (organiser)</option>
+          </select>
+        </label>
+        <button class="btn gold" type="submit">Sign up</button>
+        <div class="small dim">Already registered? <a href="login.html">Log in</a></div>
+      </form>
+    </div>
+  </div>
+<script src="js/app.js"></script>
+<script>
+  const { api, errMsg, setSession, renderNav, toast } = TBS;
+  renderNav("");
+  document.getElementById("regForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const f = new FormData(ev.target);
+    try {
+      const res = await api("/api/auth/register", { method: "POST",
+        body: { name: f.get("name"), email: f.get("email"),
+                password: f.get("password"), role: f.get("role") } });
+      setSession(res.token, res.user);
+      location.href = res.user.role === "organiser" ? "organiser.html" : "index.html";
+    } catch (e) { toast(errMsg(e), "error"); }
+  });
+</script>
+</body>
+</html>

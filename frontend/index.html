@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TicketBox — Movies & Concerts</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav id="nav"></nav>
+  <div class="wrap">
+
+    <!-- ============================ hero ================================ -->
+    <header class="hero2">
+      <div>
+        <div class="marquee-dots" aria-hidden="true"></div>
+        <p class="eyebrow mono">NOW BOOKING · MOVIES &amp; CONCERTS</p>
+        <h1>Your exact <span class="hl-chip">seat</span>,<br>locked before anyone<br>else refreshes.</h1>
+        <p class="lead">Pick from a live map. Your selection is held for 10 minutes
+           while you pay — then released automatically. Sold out? The waitlist
+           mails you the next cancellation.</p>
+        <div class="cta-row">
+          <a class="btn gold" href="#shows">Browse shows</a>
+          <a class="btn ghost" href="#how">How it works</a>
+        </div>
+        <p class="trust mono" id="liveCount">&nbsp;</p>
+      </div>
+
+      <!-- signature: a living miniature of the seat map itself -->
+      <div class="mini-hall" aria-hidden="true">
+        <div class="mini-screen"></div>
+        <div class="mini-screen-label mono">SCREEN</div>
+        <div class="mini-rows" id="miniRows"></div>
+        <div class="mini-legend mono">
+          <span><i class="ms sel"></i>yours</span>
+          <span><i class="ms b"></i>booked</span>
+          <span><i class="ms p"></i>premium</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- ======================= how it works ============================= -->
+    <section class="how-strip" id="how">
+      <div class="stub how">
+        <div class="n">STEP 01</div>
+        <h3>Hold your seats</h3>
+        <p class="dim small">Tap seats on the live map. They're yours for
+           10 minutes — nobody else can take them.</p>
+      </div>
+      <div class="stub how">
+        <div class="n">STEP 02</div>
+        <h3>Confirm &amp; pay</h3>
+        <p class="dim small">Finish checkout before the countdown ends, or the
+           seats quietly go back on sale.</p>
+      </div>
+      <div class="stub how">
+        <div class="n">STEP 03</div>
+        <h3>QR at the gate</h3>
+        <p class="dim small">Your ticket lands in your inbox as a QR code.
+           Cancel anytime before showtime.</p>
+      </div>
+    </section>
+
+    <!-- ========================= browse ================================= -->
+    <h2 class="section-title" id="shows">On sale now</h2>
+    <form class="filters" id="filterForm">
+      <label class="field">Type
+        <select name="type">
+          <option value="">All</option>
+          <option value="movie">Movies</option>
+          <option value="concert">Concerts</option>
+        </select>
+      </label>
+      <label class="field">Date
+        <input type="date" name="date">
+      </label>
+      <label class="field" style="flex:1;min-width:180px">Search
+        <input type="text" name="q" placeholder="Title…">
+      </label>
+      <label class="field">&nbsp;
+        <button class="btn gold" type="submit">Filter</button>
+      </label>
+    </form>
+
+    <div class="grid" id="events"></div>
+    <div class="empty" id="empty" hidden>No events match those filters.</div>
+  </div>
+
+<script src="js/app.js"></script>
+<script>
+  const { api, errMsg, renderNav, toast, fmtDate, fmtMoney } = TBS;
+  renderNav("events");
+
+  /* --- decorative mini seat map in the hero (pure front-end, no API) ----- */
+  (function buildMiniHall() {
+    // rows: [premium?, seats, indexes booked, indexes selected]
+    const rows = [
+      [true,  8, [1, 5], [3, 4]],
+      [true,  8, [6], []],
+      [false, 10, [0, 4, 8], []],
+      [false, 10, [2], [6]],
+      [false, 10, [], []],
+    ];
+    document.getElementById("miniRows").innerHTML = rows.map(([prem, n, booked, sel]) =>
+      `<div class="mini-row">${Array.from({ length: n }, (_, i) => {
+        let cls = "ms" + (prem ? " p" : "");
+        if (booked.includes(i)) cls = "ms b";
+        if (sel.includes(i)) cls = "ms sel" + (i === 3 ? " pulse" : "");
+        return `<i class="${cls}"></i>`;
+      }).join("")}</div>`).join("");
+  })();
+
+  async function load() {
+    const form = document.getElementById("filterForm");
+    const params = new URLSearchParams();
+    for (const [k, v] of new FormData(form)) if (v) params.set(k, v);
+    try {
+      const events = await api("/api/events?" + params.toString());
+      const grid = document.getElementById("events");
+      document.getElementById("empty").hidden = events.length > 0;
+      const n = events.length;
+      document.getElementById("liveCount").textContent =
+        n ? `${n} show${n === 1 ? "" : "s"} on sale · holds auto-release · waitlist on sell-out` : " ";
+      grid.innerHTML = events.map(e => `
+        <a class="stub event-stub" href="event.html?id=${e.id}">
+          <div class="chips">
+            <span class="badge ${e.event_type}">${e.event_type}</span>
+            ${e.sold_out ? '<span class="badge soldout">Sold out</span>' : ""}
+          </div>
+          <h3>${e.title}</h3>
+          <span class="date-chip mono">${fmtDate(e.starts_at)}</span>
+          <div class="meta dim small">${e.venue.name}, ${e.venue.city}</div>
+          <div class="price">${e.sold_out ? "Join the waitlist →" : "from " + fmtMoney(e.min_price)}</div>
+        </a>`).join("");
+    } catch (e) { toast(errMsg(e), "error"); }
+  }
+
+  document.getElementById("filterForm").addEventListener("submit",
+    (ev) => { ev.preventDefault(); load(); });
+  load();
+</script>
+</body>
+</html>
