@@ -1,5 +1,7 @@
 # TicketBox — Ticket Booking System
 
+Deployed url=https://web-production-732b5a.up.railway.app/event.html?id=1
+
 A ticket booking platform for movies and concerts. Customers book seats from a
 live visual seat map, held seats auto-release on checkout abandonment, sold-out
 categories have a FIFO waitlist with automatic seat assignment on cancellation,
