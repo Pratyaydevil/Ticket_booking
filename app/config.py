@@ -33,9 +33,17 @@ WAITLIST_OFFER_TTL_SECONDS = _int("WAITLIST_OFFER_TTL_SECONDS", 900)  # 15 min o
 SWEEP_INTERVAL_SECONDS = _int("SWEEP_INTERVAL_SECONDS", 10)        # sweeper cadence
 
 # --- Email ------------------------------------------------------------------
-# EMAIL_MODE=console  -> emails are printed + written to ./outbox (no creds needed)
-# EMAIL_MODE=smtp     -> real emails via any free-tier SMTP (Brevo, Mailtrap, Gmail app password)
+# EMAIL_MODE=console -> emails are printed + written to ./outbox (no creds needed)
+# EMAIL_MODE=smtp    -> real emails via raw SMTP (Brevo, Mailtrap, Gmail app password).
+#                       Works great locally; some hosts (Railway, some free tiers)
+#                       block or heavily delay outbound SMTP ports, causing timeouts.
+# EMAIL_MODE=api     -> real emails via Brevo's HTTPS API instead of SMTP. Goes over
+#                       port 443 like any normal web request, so it is NOT affected
+#                       by hosts that throttle/block SMTP ports. Recommended for
+#                       Railway/Render-style deployments. Needs BREVO_API_KEY only
+#                       (SMTP_* variables are ignored in this mode).
 EMAIL_MODE = os.getenv("EMAIL_MODE", "console")
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
 SMTP_HOST = os.getenv("SMTP_HOST", "")
 SMTP_PORT = _int("SMTP_PORT", 587)
 SMTP_USER = os.getenv("SMTP_USER", "")

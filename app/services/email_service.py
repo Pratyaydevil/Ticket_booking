@@ -1,14 +1,23 @@
 """
-Email delivery with two modes:
+Email delivery with three modes:
 
 - console (default): every email is printed to the server log AND written to
   ./outbox/ (body as .txt, QR as .png) so the whole flow is testable with
   zero credentials.
 - smtp: real delivery through any free-tier SMTP relay (Brevo, Mailtrap,
-  Gmail app password...) configured via env vars.
+  Gmail app password...) configured via env vars. Works well locally; some
+  hosts (Railway and other free-tier PaaS providers) block or badly throttle
+  outbound SMTP ports (587/465), which shows up here as a "timed out" error
+  even though the credentials are fine.
+- api: real delivery via Brevo's transactional email HTTPS API. This travels
+  over port 443 like any normal web request, so it is not affected by hosts
+  that block SMTP ports — the recommended mode for Railway/Render-style
+  deployments. Needs only BREVO_API_KEY (the SMTP_* variables are unused
+  in this mode).
 
 Failures are logged, never raised — email must not break a paid booking.
 """
+import base64
 import re
 import smtplib
 import time
@@ -16,21 +25,55 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+import requests
+
 from .. import config
 
 Attachment = Tuple[str, bytes, str, str]  # filename, data, maintype, subtype
+
+_BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
 
 
 def send_email(to: str, subject: str, body: str,
                attachments: Optional[List[Attachment]] = None) -> None:
     attachments = attachments or []
     try:
-        if config.EMAIL_MODE == "smtp" and config.SMTP_HOST:
+        if config.EMAIL_MODE == "api" and config.BREVO_API_KEY:
+            _send_api(to, subject, body, attachments)
+        elif config.EMAIL_MODE == "smtp" and config.SMTP_HOST:
             _send_smtp(to, subject, body, attachments)
         else:
             _send_console(to, subject, body, attachments)
     except Exception as exc:  # noqa: BLE001 — email is best-effort by design
         print(f"[email] FAILED to={to} subject={subject!r}: {exc}")
+
+
+def _send_api(to, subject, body, attachments):
+    """Send via Brevo's HTTPS transactional email API (port 443 — never
+    blocked the way raw SMTP ports sometimes are on hosted platforms)."""
+    payload = {
+        "sender": {"email": config.EMAIL_FROM},
+        "to": [{"email": to}],
+        "subject": subject,
+        # Plain-text body rendered as simple HTML so line breaks survive.
+        "htmlContent": "<pre style='font-family:inherit'>" + body + "</pre>",
+    }
+    if attachments:
+        payload["attachment"] = [
+            {"name": filename, "content": base64.b64encode(data).decode("ascii")}
+            for filename, data, _, _ in attachments
+        ]
+    resp = requests.post(
+        _BREVO_API_URL,
+        headers={"api-key": config.BREVO_API_KEY,
+                 "Content-Type": "application/json",
+                 "Accept": "application/json"},
+        json=payload,
+        timeout=20,
+    )
+    if resp.status_code >= 300:
+        raise RuntimeError(f"Brevo API {resp.status_code}: {resp.text[:300]}")
+    print(f"[email] sent via Brevo API to={to} subject={subject!r}")
 
 
 def _send_smtp(to, subject, body, attachments):
